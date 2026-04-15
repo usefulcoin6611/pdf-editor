@@ -22,6 +22,7 @@ export interface RemoteRun {
 export interface RemoteParagraph {
   id: string;
   text: string;
+  alignment?: string;
   runs: RemoteRun[];
 }
 
@@ -75,6 +76,8 @@ export interface TextParagraph {
   italic: boolean;
   fontWeight: number;
   letterSpacing: number;
+  alignment?: string;
+  color?: string;
   /** PDF font resource key (e.g. "F1") for advanced font embedding */
   pdfFontKey?: string;
 }
@@ -341,12 +344,13 @@ export class PDFManager {
     const rawItems: RawTextItem[] = (tc.items as any[])
       .filter(item => item.str?.trim().length > 0)
       .map(item => {
-        const [a, b, , , tx, ty] = item.transform as number[];
+        const [, , , , tx, ty] = item.transform as number[];
         const vpt = Util.transform(vp.transform, item.transform);
         const vx = vpt[4];
         const vy = vpt[5] - Math.abs(vpt[3]);
         const vh = Math.abs(vpt[3]);
-        const fontSize = Math.sqrt(a * a + b * b);
+        // vh represents the true visual height in viewport pixels (at scale=1)
+        const fontSize = vh; 
         const style = (tc.styles as any)[item.fontName] ?? {};
         const fontFamily: string = style.fontFamily || "serif";
         return {
@@ -518,6 +522,43 @@ export class PDFManager {
 
     const blob = await response.blob();
     return new Uint8Array(await blob.arrayBuffer());
+  }
+
+  async splitRemote(file: File, ranges: { label: string, pages: string }[]): Promise<Blob> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("ranges", JSON.stringify(ranges));
+
+    const response = await fetch(`${API_URL}/split-pdf`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || "Failed to split PDF");
+    }
+
+    return await response.blob();
+  }
+
+  async mergeRemote(files: File[]): Promise<Blob> {
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append("files", file);
+    });
+
+    const response = await fetch(`${API_URL}/merge-pdf`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || "Failed to merge PDFs");
+    }
+
+    return await response.blob();
   }
 }
 

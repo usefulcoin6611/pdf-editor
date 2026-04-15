@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -53,7 +53,7 @@ class RunInfo(BaseModel):
 class ParagraphInfo(BaseModel):
     id: str
     text: str
-    alignment: Optional[int]
+    alignment: Optional[str]
     lineSpacing: Optional[float]
     runs: List[RunInfo]
 
@@ -65,10 +65,15 @@ class LoadResponse(BaseModel):
 class EditRun(BaseModel):
     runId: str
     newText: str
+    fontSize: Optional[float] = None
 
 class ExportRequest(BaseModel):
     sessionId: str
     edits: List[EditRun]
+
+class SplitRange(BaseModel):
+    label: str
+    pages: str # e.g. "1-3", "5", "7-10"
 
 # ─── Core Logic ───────────────────────────────────────────────────────────────
 
@@ -90,7 +95,8 @@ def parse_docx(docx_path: Path) -> List[Dict[str, Any]]:
         if not para.text.strip(): continue
 
         fmt = para.paragraph_format
-        alignment = para.alignment if para.alignment is not None else -1
+        align_map = {0: "left", 1: "center", 2: "right", 3: "justify"}
+        align_str = align_map.get(para.alignment, "left") if para.alignment is not None else "left"
         line_spacing = fmt.line_spacing if fmt.line_spacing is not None else 1.0
 
         runs = []
@@ -115,7 +121,7 @@ def parse_docx(docx_path: Path) -> List[Dict[str, Any]]:
             paragraphs.append({
                 "id": str(p_idx),
                 "text": para.text,
-                "alignment": alignment,
+                "alignment": align_str,
                 "lineSpacing": line_spacing,
                 "runs": runs,
             })
@@ -124,8 +130,9 @@ def parse_docx(docx_path: Path) -> List[Dict[str, Any]]:
 
 def apply_edits(src_docx: Path, edits: List[EditRun], dst_docx: Path):
     from docx import Document
+    from docx.shared import Pt
     doc = Document(str(src_docx))
-    edit_map = {e.runId: e.newText for e in edits}
+    edit_map = {e.runId: e for e in edits}
     applied_count = 0
     requested_ids = set(edit_map.keys())
     found_ids = set()
@@ -134,12 +141,14 @@ def apply_edits(src_docx: Path, edits: List[EditRun], dst_docx: Path):
         # Paragraph-level fallback: if a user sends a p_idx directly
         if str(p_idx) in edit_map:
             # Re-build the paragraph with new text
-            # We clear all runs and add a single one to maintain structure
-            new_text = edit_map[str(p_idx)]
+            edit_obj = edit_map[str(p_idx)]
+            new_text = edit_obj.newText
             for run in para.runs:
                 run.text = ""
             if para.runs:
                 para.runs[0].text = new_text
+                if edit_obj.fontSize is not None:
+                    para.runs[0].font.size = Pt(edit_obj.fontSize * 0.75)
             else:
                 para.add_run(new_text)
             
@@ -158,7 +167,10 @@ def apply_edits(src_docx: Path, edits: List[EditRun], dst_docx: Path):
         for r_idx, run in enumerate(para.runs):
             rid = f"{p_idx}-{r_idx}"
             if rid in edit_map:
-                run.text = edit_map[rid]
+                edit_obj = edit_map[rid]
+                run.text = edit_obj.newText
+                if edit_obj.fontSize is not None:
+                    run.font.size = Pt(edit_obj.fontSize * 0.75)
                 modified = True
                 found_ids.add(rid)
                 applied_count += 1
@@ -270,6 +282,83 @@ async def export_pdf(request: ExportRequest):
         )
     raise HTTPException(status_code=500, detail="PDF conversion failed on server")
 
+@app.post("/api/split-pdf")
+async def split_pdf(file: UploadFile = File(...), ranges: str = Form("all")):
+    """
+    Splits PDF into multiple parts based on ranges.
+    ranges is a JSON string of List[Dict[label: str, pages: str]]
+    """
+    import json
+    import fitz
+    import zipfile
+    import io
+
+    try:
+        range_data = json.loads(ranges)
+    except Exception:
+        range_data = [{"label": "part1", "pages": "1-end"}]
+
+    pdf_bytes = await file.read()
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    total_pages = doc.page_count
+
+    from fastapi import Response
+    # If only one range and it's "all", just return the file
+    if len(range_data) == 1 and (range_data[0]["pages"] == "all" or range_data[0]["pages"] == f"1-{total_pages}"):
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=split.pdf"})
+
+    zip_buffer = io.BytesIO()
+    try:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for item in range_data:
+                label = item.get("label", "part")
+                pages_str = item.get("pages", "")
+                
+                output_doc = fitz.open()
+                try:
+                    page_indices = []
+                    for part in pages_str.split(","):
+                        part = part.strip()
+                        if not part: continue
+                        if "-" in part:
+                            try:
+                                start_str, end_str = part.split("-")
+                                start_idx = int(start_str) - 1
+                                if end_str.lower() == "end":
+                                    end_idx = total_pages - 1
+                                else:
+                                    end_idx = int(end_str) - 1
+                                page_indices.extend(range(start_idx, end_idx + 1))
+                            except ValueError: continue
+                        else:
+                            try:
+                                page_indices.append(int(part) - 1)
+                            except ValueError: continue
+                    
+                    page_indices = [i for i in page_indices if 0 <= i < total_pages]
+                    if not page_indices:
+                        continue
+
+                    output_doc.insert_pdf(doc, from_page=0, to_page=total_pages-1, select=page_indices)
+                    
+                    # Use tobytes() for reliable in-memory conversion
+                    pdf_data = output_doc.tobytes()
+                    zip_file.writestr(f"{label}.pdf", pdf_data)
+                    output_doc.close()
+                except Exception as e:
+                    logger.error(f"Error processing range {pages_str}: {e}")
+                    if not output_doc.is_closed: output_doc.close()
+                    continue
+    finally:
+        doc.close()
+
+    from fastapi import Response
+    return Response(
+        content=zip_buffer.getvalue(), 
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=split_pdfs.zip"}
+    )
+
 @app.post("/api/export-docx")
 async def export_docx(request: ExportRequest):
     session = SESSIONS.get(request.sessionId)
@@ -295,6 +384,38 @@ async def debug_docx(session_id: str):
     if not session or "edited_docx" not in session:
         raise HTTPException(status_code=404, detail="Debug file not found")
     return FileResponse(path=session["edited_docx"], filename="debug_edited.docx")
+
+@app.post("/api/merge-pdf")
+async def merge_pdf(files: List[UploadFile] = File(...)):
+    """
+    Merges multiple PDF files into one.
+    """
+    import fitz
+    import io
+    from fastapi import Response
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    merged_doc = fitz.open()
+    try:
+        for file in files:
+            pdf_bytes = await file.read()
+            src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            merged_doc.insert_pdf(src_doc)
+            src_doc.close()
+        
+        pdf_data = merged_doc.tobytes()
+        return Response(
+            content=pdf_data,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=merged.pdf"}
+        )
+    except Exception as e:
+        logger.error(f"Merge error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        merged_doc.close()
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

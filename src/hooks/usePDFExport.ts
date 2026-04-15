@@ -52,8 +52,9 @@ export function usePDFExport({
                runId = matchedRun ? matchedRun.id : matchedPara.id;
              }
           }
-
-          return { runId, newText };
+          
+          const fontSize = paragraphRegistry[id]?.fontSize;
+          return { runId, newText, fontSize };
         });
         resultData = await pdfManager.exportRemote(sessionId, exportEdits);
       } else {

@@ -18,8 +18,13 @@ export function ParagraphBlock({
 
   // The key trick: use the full styling discovered from pdf.js computed styles
   const effectiveFontFamily = discoveredFont?.fontFamily || `"${para.fontFamily}", serif`;
-  const effectiveFontWeight = discoveredFont?.fontWeight || para.fontWeight;
+  
+  // Weights: Try to match exactly if discovered, otherwise use PDF metadata
+  const effectiveFontWeight = discoveredFont?.fontWeight || (para.bold ? "700" : "400");
   const effectiveFontStyle = discoveredFont?.fontStyle || (para.italic ? "italic" : "normal");
+  
+  // Heuristic: If it's likely a header but discovery says 'normal', prefer 'bold'
+  const finalWeight = (para.fontSize > 18 && effectiveFontWeight === "400") ? "700" : effectiveFontWeight;
 
 
   useEffect(() => {
@@ -62,12 +67,11 @@ export function ParagraphBlock({
       style={{
         left: `${para.vx * scale}px`,
         top: `${para.vy * scale}px`,
-        width: `${para.vw * scale}px`,
         minHeight: `${para.vh * scale}px`,
 
         // Visibility logic: hide with transparency, show with solid color
         backgroundColor: isActive || isEdited ? "white" : hovered ? "rgba(79,70,229,0.06)" : "transparent",
-        color: isActive || isEdited ? "black" : "transparent",
+        color: isActive || isEdited ? (para.color ? `#${para.color}` : "black") : "transparent",
         opacity: 1,
 
         // Visual cues: only show borders when interacting
@@ -82,12 +86,18 @@ export function ParagraphBlock({
         cursor: "text",
         pointerEvents: "auto",
         display: "block",
+        contain: "layout",
 
         // Critical: use the pdf.js-discovered font attributes for EXACT visual match
         fontFamily: effectiveFontFamily,
         fontSize: discoveredFont?.fontSize || `${para.fontSize * scale}px`,
-        fontWeight: effectiveFontWeight || "normal",
+        fontWeight: finalWeight,
         fontStyle: effectiveFontStyle || "normal",
+        textAlign: (para.alignment as any) || "left",
+        
+        transform: `scaleX(${discoveredFont?.scaleX || 1})`,
+        transformOrigin: "0 0",
+        width: `${para.vw * scale}px`,
 
         lineHeight: para.lines.length > 0
             ? `${(para.vh / para.lines.length) * scale}px`

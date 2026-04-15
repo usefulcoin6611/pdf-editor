@@ -4,9 +4,9 @@ import type { FileUploadHook } from "@/types/upload";
 const ACCEPTED_TYPE = "application/pdf";
 const ACCEPTED_EXT = ".pdf";
 
-export function useFileUpload(onUpload: (file: File) => void): FileUploadHook {
+export function useFileUpload(onUpload: (files: File | File[]) => void, multiple = false): FileUploadHook {
   const [isDragging, setIsDragging] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -22,28 +22,41 @@ export function useFileUpload(onUpload: (file: File) => void): FileUploadHook {
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile && droppedFile.type === ACCEPTED_TYPE) {
-      setFile(droppedFile);
+    
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(f => f.type === ACCEPTED_TYPE);
+    if (droppedFiles.length > 0) {
+      if (multiple) {
+        setFiles(prev => [...prev, ...droppedFiles]);
+      } else {
+        setFiles([droppedFiles[0]]);
+      }
     }
-  }, []);
+  }, [multiple]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile && selectedFile.type === ACCEPTED_TYPE) {
-      setFile(selectedFile);
+    const selectedFiles = e.target.files ? Array.from(e.target.files).filter(f => f.type === ACCEPTED_TYPE) : [];
+    if (selectedFiles.length > 0) {
+      if (multiple) {
+        setFiles(prev => [...prev, ...selectedFiles]);
+      } else {
+        setFiles([selectedFiles[0]]);
+      }
     }
+  }, [multiple]);
+
+  const removeFile = useCallback((index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  const clearFile = useCallback(() => {
-    setFile(null);
+  const clearFiles = useCallback(() => {
+    setFiles([]);
   }, []);
 
   const handleUpload = useCallback(() => {
-    if (file) {
-      onUpload(file);
+    if (files.length > 0) {
+      onUpload(multiple ? files : files[0]);
     }
-  }, [file, onUpload]);
+  }, [files, onUpload, multiple]);
 
   const onBrowse = useCallback(() => {
     inputRef.current?.click();
@@ -53,23 +66,26 @@ export function useFileUpload(onUpload: (file: File) => void): FileUploadHook {
     onDragOver,
     onDragLeave,
     onDrop,
-    onClick: () => !file && onBrowse(),
+    onClick: () => files.length === 0 && onBrowse(),
     role: "button",
     "aria-label": "File upload area",
-  }), [onDragOver, onDragLeave, onDrop, onBrowse, file]);
+  }), [onDragOver, onDragLeave, onDrop, onBrowse, files]);
 
   const getInputProps = useCallback(() => ({
     ref: inputRef,
     type: "file" as const,
     accept: ACCEPTED_EXT,
+    multiple,
     className: "hidden",
     onChange: handleFileChange,
-  }), [handleFileChange]);
+  }), [handleFileChange, multiple]);
 
   return {
     isDragging,
-    file,
-    clearFile,
+    files,
+    file: files[0] || null, // Backward compatibility
+    clearFile: clearFiles,
+    removeFile,
     handleUpload,
     getRootProps,
     getInputProps,

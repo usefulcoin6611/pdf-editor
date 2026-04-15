@@ -57,12 +57,27 @@ export function usePDFRenderer(file: File, onExit: () => void) {
       pdfManager.getParagraphs(pageNo),
     ]);
     setCurrentPageProxy(proxy);
-    setParagraphs(paras);
+    
+    // Enrich visual paragraphs with backend metadata (like alignment and color) if available
+    const enrichedParas = paras.map(p => {
+      const pText = p.text.replace(/\s+/g, '').trim();
+      const match = remoteParagraphs.find(rp => rp.text.replace(/\s+/g, '').trim() === pText);
+      if (match) {
+        return { 
+          ...p, 
+          alignment: match.alignment || p.alignment,
+          color: match.runs.find(r => r.color)?.color 
+        };
+      }
+      return p;
+    });
+
+    setParagraphs(enrichedParas);
     
     // Register these paragraphs so we don't lose their metadata when changing pages
     setParagraphRegistry(prev => {
       const next = { ...prev };
-      paras.forEach(p => { next[p.id] = p; });
+      enrichedParas.forEach(p => { next[p.id] = p; });
       return next;
     });
 

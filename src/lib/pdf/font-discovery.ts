@@ -44,12 +44,12 @@ export function discoverPdfJsFonts(
 
   const fontMap: Record<string, DiscoveredFont> = {};
   for (const para of paragraphs) {
-    const inBounds = entries.filter(e =>
-      e.x >= para.vx - 8 &&
-      e.x <= para.vx + para.vw + 8 &&
-      e.y >= para.vy - 8 &&
-      e.y <= para.vy + para.vh + 8
-    );
+      const inBounds = entries.filter(e =>
+        e.x >= para.vx - 20 &&
+        e.x <= para.vx + para.vw + 20 &&
+        e.y >= para.vy - 20 &&
+        e.y <= para.vy + para.vh + 20
+      );
 
     if (inBounds.length > 0) {
       const families: Record<string, number> = {};
@@ -59,32 +59,38 @@ export function discoverPdfJsFonts(
       const scaleXs: number[] = [];
       
       inBounds.forEach(e => {
-        families[e.font] = (families[e.font] ?? 0) + 1;
+        families[e.font.replace(/['"]/g, "")] = (families[e.font.replace(/['"]/g, "")] ?? 0) + 1;
         weights[e.weight] = (weights[e.weight] ?? 0) + 1;
         styles[e.style] = (styles[e.style] ?? 0) + 1;
-        sizes[e.fontSize] = (sizes[e.fontSize] ?? 0) + 1;
         
-        // Extract scaleX from matrix(a, b, c, d, tx, ty)
+        // Extract scale from matrix to compute REAL visual font size
+        let effectiveSize = e.fontSize;
+        let scaleX = 1;
         if (e.transform && e.transform.startsWith("matrix")) {
            const parts = e.transform.match(/matrix\(([^)]+)\)/);
            if (parts && parts[1]) {
              const m = parts[1].split(',').map(s => parseFloat(s.trim()));
-             if (!isNaN(m[0])) {
-               scaleXs.push(m[0]);
+             if (!isNaN(m[0])) scaleX = Math.abs(m[0]);
+             if (!isNaN(m[3])) {
+               const val = parseFloat(e.fontSize);
+               effectiveSize = `${(val * Math.abs(m[3])).toFixed(1)}px`;
              }
            }
         }
+        
+        sizes[effectiveSize] = (sizes[effectiveSize] ?? 0) + 1;
+        scaleXs.push(scaleX);
       });
 
-      const getTop = (map: Record<string, number>) => Object.entries(map).sort((a, b) => b[1] - a[1])[0][0];
-      const avgScaleX = scaleXs.length ? scaleXs.reduce((a, b) => a + b, 0) / scaleXs.length : 1;
+      const mostFrequent = (map: Record<string, number>) => 
+        Object.entries(map).sort((a, b) => b[1] - a[1])[0][0];
 
       fontMap[para.id] = {
-        fontFamily: getTop(families),
-        fontWeight: getTop(weights),
-        fontStyle: getTop(styles),
-        fontSize: getTop(sizes),
-        scaleX: avgScaleX,
+        fontFamily: mostFrequent(families),
+        fontWeight: mostFrequent(weights),
+        fontStyle: mostFrequent(styles),
+        fontSize: mostFrequent(sizes),
+        scaleX: scaleXs.length > 0 ? scaleXs.reduce((a, b) => a + b, 0) / scaleXs.length : 1,
       };
     }
   }
