@@ -1,6 +1,5 @@
-# 🌌 Antigravity PDF Forge
 
-Antigravity PDF Forge adalah editor PDF presisi tinggi yang memungkinkan modifikasi teks secara *native* tanpa merusak tata letak (*layout*) dokumen. Menggunakan arsitektur **Hybrid Logic**, aplikasi ini menggabungkan kekuatan rendering browser dengan mesin pemroses dokumen Python untuk hasil yang sempurna.
+Editor PDF Forge adalah editor PDF presisi tinggi yang memungkinkan modifikasi teks secara *native* tanpa merusak tata letak (*layout*) dokumen. Menggunakan arsitektur **Hybrid Logic**, aplikasi ini menggabungkan kekuatan rendering browser dengan mesin pemroses dokumen Python untuk hasil yang sempurna.
 
 ## 🚀 Fitur Utama
 - **Layout Preservation:** Teks diedit tepat di atas koordinat aslinya.
