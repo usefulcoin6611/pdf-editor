@@ -1,10 +1,15 @@
+export interface MergerFile {
+  id: string;
+  file: File;
+}
+
 export interface PDFMergerProps {
   files: File[];
   onExit: () => void;
 }
 
 export interface MergeListItemProps {
-  file: File;
+  item: MergerFile;
   index: number;
   isFirst: boolean;
   isLast: boolean;
